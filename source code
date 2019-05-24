@@ -1,0 +1,64 @@
+//matlab code
+logLength = 40;
+lengthlist = [8; 12; 16; 20];
+quantity = [90; 111; 55; 30];
+nLengths = length(lengthlist);
+patterns = diag(floor(logLength./lengthlist));
+nPatterns = size(patterns,2);
+subproblem = optimproblem();
+cuts = optimvar('cuts', nLengths, 1, 'Type','integer','LowerBound',zeros(nLengths,1));
+subproblem.Constraints = dot(lengthlist,cuts) <= logLength;
+lpopts = optimoptions('linprog','Display','off');
+ipopts = optimoptions('intlinprog',lpopts);
+reducedCost = -inf;
+reducedCostTolerance = -0.0001;
+exitflag = 1;
+while reducedCost < reducedCostTolerance && exitflag > 0
+logprob = optimproblem('Description','Cut Logs');
+% Create variables representing the number of each pattern used
+x = optimvar('x', nPatterns, 1, 'LowerBound', 0);
+% The objective is the number of logs used
+logprob.Objective.logsUsed = sum(x);
+% The constraint is that the cuts satisfy the demand
+logprob.Constraints.Demand = patterns*x >= quantity;
+[values,nLogs,exitflag,~,lambda] = solve(logprob,'options',lpopts);
+if exitflag > 0
+fprintf('Using %g logs\n',nLogs);
+% Now generate a new pattern, if possible
+subproblem.Objective = 1.0 - dot(lambda.Constraints.Demand,cuts);
+[values,reducedCost,pexitflag] = solve(subproblem,'options',ipopts);
+newpattern = round(values.cuts);
+if double(pexitflag) > 0 && reducedCost < reducedCostTolerance
+patterns = [patterns newpattern];
+nPatterns = nPatterns + 1;
+end
+end
+end
+if exitflag <= 0
+disp('Error in column generation phase')
+else
+x.Type = 'integer';
+[values,logsUsed,exitflag] = solve(logprob,'options',ipopts);
+if double(exitflag) > 0
+values.x = round(values.x); % in case some values were not exactly integers
+logsUsed = sum(values.x);
+fprintf('Optimal solution uses %g logs\n', logsUsed);
+totalwaste = sum((patterns*values.x - quantity).*lengthlist); % waste due to overproduction
+for j = 1:size(values.x)
+if values.x(j) > 0
+fprintf('Cut %g logs with pattern\n',values.x(j));
+for w = 1:size(patterns,1)
+if patterns(w,j) > 0
+fprintf(' %g cut(s) of length %d\n', patterns(w,j),lengthlist(w));
+end
+end
+wastej = logLength - dot(patterns(:,j),lengthlist); % waste due to pattern inefficiency
+totalwaste = totalwaste + wastej;
+fprintf(' Waste of this pattern is %g\n',wastej);
+end
+end
+fprintf('Total waste in this problem is %g.\n',totalwaste);
+else
+disp('Error in final optimization')
+end
+end
